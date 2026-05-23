@@ -261,7 +261,7 @@ public class PagoService {
             pago.setFolioSii(folioRespuesta);
         }
         
-        // 3. FACTORY
+        // 3. LA MAGIA DEL FACTORY
         byte[] pdfBytes = documentoFactory.obtenerGenerador(tipoDocumentoAGenerar).generarDocumento(pago);
 
         pagoRepository.save(pago);
