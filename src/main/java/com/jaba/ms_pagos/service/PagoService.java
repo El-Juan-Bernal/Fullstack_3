@@ -249,21 +249,25 @@ public class PagoService {
         // 1. Solicitamos el Folio al SII (Aquí entra en acción el Circuit Breaker)
         String folioRespuesta = siiService.solicitarFolioSii(pago.getTipoDocumento(), pago.getMontoTotal());
         
-        String tipoDocumentoAGenerar = pago.getTipoDocumento(); // Por defecto "BOLETA" o "FACTURA"
+        byte[] pdfBytes = null;
+        String mensajeRespuesta;
 
-        // 2. Evaluamos qué nos respondió el SII
+        // 2. Evaluamos qué nos respondió el SII (¡ADIÓS HARCODEO!)
         if ("PENDIENTE_SII".equals(folioRespuesta)) {
-            pago.setEstado("APROBADO_SIN_BOLETA");
-            pago.setFolioSii("PENDIENTE");
-            tipoDocumentoAGenerar = "COMPROBANTE"; // Le decimos al Factory que dibuje el de emergencia
+            pago.setEstado("APROBADO_BOLETA_PENDIENTE");
+            pago.setFolioSii("PENDIENTE_EMISION");
+            mensajeRespuesta = "Pago aprobado. La emisión de tu boleta está en cola por intermitencias del SII.";
+            
+            // Nota: No llamamos al Factory, el PDF queda en null.
         } else {
             pago.setEstado("APROBADO");
             pago.setFolioSii(folioRespuesta);
+            
+            // 3. LA MAGIA DEL FACTORY (Solo se ejecuta si hay folio real)
+            pdfBytes = documentoFactory.obtenerGenerador(pago.getTipoDocumento()).generarDocumento(pago);
+            mensajeRespuesta = "Pago aprobado y boleta emitida exitosamente.";
         }
         
-        // 3. LA MAGIA DEL FACTORY
-        byte[] pdfBytes = documentoFactory.obtenerGenerador(tipoDocumentoAGenerar).generarDocumento(pago);
-
         pagoRepository.save(pago);
 
         VentaAprobadaEvent evento = new VentaAprobadaEvent(
@@ -271,19 +275,24 @@ public class PagoService {
                 pago.getOrdenCompra(),
                 pago.getUsuarioId(),
                 pago.getMontoTotal(),
-                tipoDocumentoAGenerar,
+                pago.getTipoDocumento(),
                 pago.getFolioSii(),
-                pdfBytes,
+                pdfBytes, // Será null si falló el SII. El servicio de mensajería sabrá qué hacer.
                 pago.getFechaHora()
         );
 
-        // 4. Publicamos hacia RabbitMQ (Bodega siempre necesita despachar, sin importar el SII)
+        // 4. Publicamos hacia RabbitMQ (Bodega siempre despacha, sin importar el SII)
         ventaPublisher.publicarVentaExitosa(evento);
+
+        if ("PENDIENTE_SII".equals(folioRespuesta)) {
+            // Cola de reintentos para SII: Aquí es donde el evento se quedará esperando hasta que el SII vuelva a estar disponible.
+            ventaPublisher.publicarReintentoSii(evento);
+        }
 
         return Map.of(
             "estado", pago.getEstado(), 
-            "documentoGenerado", tipoDocumentoAGenerar,
-            "folioSii", pago.getFolioSii()
+            "folioSii", pago.getFolioSii(),
+            "mensaje", mensajeRespuesta
         );
     }
 }

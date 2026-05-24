@@ -31,4 +31,13 @@ public class VentaPublisher {
         );
         System.out.println("✅ Mensaje enviado a la cola de Bodega.");
     }
+
+    public void publicarReintentoSii(VentaAprobadaEvent evento) {
+        rabbitTemplate.convertAndSend(
+            RabbitMQConfig.EXCHANGE_PRINCIPAL, 
+            RabbitMQConfig.KEY_SII_RETRY, 
+            evento
+        );
+        System.out.println("⏳ Contingencia: Venta " + evento.ordenCompra() + " enviada a la sala de espera del SII.");
+    }
 }
